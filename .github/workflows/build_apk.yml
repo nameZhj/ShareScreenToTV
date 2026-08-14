@@ -1,17 +1,13 @@
-name: Build APKs
+name: Build & Auto Release APKs
 
 on:
   push:
     branches: [ "main" ]
-    tags:
-      - "v*"
-  pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build Android APKs
+  build-and-release:
+    name: Build & Auto Release
     runs-on: ubuntu-latest
 
     permissions:
@@ -20,6 +16,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -31,51 +29,50 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Generate Dynamic Version Tag
+        id: version
+        run: |
+          VERSION="v1.0.${{ github.run_number }}"
+          echo "tag_name=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Generated version: ${VERSION}"
+
       - name: Build APKs with Gradle
         run: ./gradlew :app-receiver:assembleDebug :app-sender:assembleDebug --no-daemon --stacktrace
 
       - name: Prepare and rename APKs
         run: |
           mkdir -p release_apks
-          # Standard names for Releases
           cp app-sender/build/outputs/apk/debug/app-sender-debug.apk release_apks/ShareScreen-Phone.apk
           cp app-receiver/build/outputs/apk/debug/app-receiver-debug.apk release_apks/ShareScreen-TV.apk
 
-      - name: Upload 手机端 APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: 手机端-ShareScreen-Phone
-          path: release_apks/ShareScreen-Phone.apk
-
-      - name: Upload 电视端 APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: 电视端-ShareScreen-TV
-          path: release_apks/ShareScreen-TV.apk
-
-      - name: Upload All APKs Bundle
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ShareScreenToTV-APKs
           path: release_apks/*.apk
 
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Auto Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.version.outputs.tag_name }}
         run: |
-          gh release delete ${{ github.ref_name }} --yes || true
-          gh release create ${{ github.ref_name }} \
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          gh release create "${TAG_NAME}" \
             release_apks/ShareScreen-Phone.apk \
             release_apks/ShareScreen-TV.apk \
-            --title "ShareScreenToTV ${{ github.ref_name }}" \
+            --title "ShareScreenToTV ${TAG_NAME}" \
             --notes "### 📥 安装包下载 (Downloads)
           - 📱 **手机端 (Phone App)**: \`ShareScreen-Phone.apk\`
           - 📺 **电视端 (TV App)**: \`ShareScreen-TV.apk\`
 
           ---
-          ### ✨ 特性更新
-          - 支持低延迟 H.264 + AAC 音视频硬件编解码投屏
-          - 支持智能识别 Wi-Fi 网卡直连，绕过 VPN 路由冲突
-          - 支持通用大文件与 APK 极速投递及电视端自动安装
-          - 专为电视遥控器优化的焦点高亮系统与等比缩放切换"
+          ### 📝 本次更新说明 (Changelog)
+          ${COMMIT_MSG}
+
+          ---
+          ### ✨ 核心特性
+          - 📱 高清低延迟 H.264 + AAC 硬件编解码投屏
+          - 🛡️ 智能识别 Wi-Fi 网卡直连，绕过 VPN 路由冲突
+          - 📦 通用大文件与 APK 极速投递及电视端自动安装
+          - 🎮 专为电视遥控器优化的焦点高亮系统与等比缩放切换" \
+            --latest
