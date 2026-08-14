@@ -13,3 +13,7 @@ Captures/
 *.log
 __pycache__/
 *.pyc
+*.py
+gradle.bat
+*.tmp
+*.bak
