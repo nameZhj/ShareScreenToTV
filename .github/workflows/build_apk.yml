@@ -1,0 +1,68 @@
+name: Build APKs
+
+on:
+  push:
+    branches: [ "main" ]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Android APKs
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build APKs with Gradle
+        run: ./gradlew :app-receiver:assembleDebug :app-sender:assembleDebug --no-daemon --stacktrace
+
+      - name: Prepare and rename APKs
+        run: |
+          mkdir -p release_apks
+          cp app-sender/build/outputs/apk/debug/app-sender-debug.apk release_apks/手机端.apk
+          cp app-receiver/build/outputs/apk/debug/app-receiver-debug.apk release_apks/电视端.apk
+
+      - name: Upload 手机端 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: 手机端
+          path: release_apks/手机端.apk
+
+      - name: Upload 电视端 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: 电视端
+          path: release_apks/电视端.apk
+
+      - name: Upload All APKs Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShareScreenToTV-APKs
+          path: release_apks/*.apk
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release_apks/手机端.apk
+            release_apks/电视端.apk
+          generate_release_notes: true
