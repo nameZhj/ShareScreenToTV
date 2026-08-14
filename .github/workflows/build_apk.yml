@@ -63,7 +63,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ github.ref_name }} release_apks/手机端.apk release_apks/电视端.apk --clobber || \
-          gh release create ${{ github.ref_name }} release_apks/手机端.apk release_apks/电视端.apk \
+          gh release delete ${{ github.ref_name }} --yes || true
+          gh release create ${{ github.ref_name }} \
+            release_apks/手机端.apk \
+            release_apks/电视端.apk \
             --title "Release ${{ github.ref_name }}" \
             --generate-notes
