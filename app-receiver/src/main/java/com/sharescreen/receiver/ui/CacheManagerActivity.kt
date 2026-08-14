@@ -80,9 +80,9 @@ class CacheManagerActivity : AppCompatActivity() {
         if (isMedia) options.add("播放/查看")
         options.add("删除文件")
 
-        TvDialogBuilder(this)
+        AlertDialog.Builder(this)
             .setTitle(file.name)
-            .setItems(options.toTypedArray()) { which ->
+            .setItems(options.toTypedArray()) { _, which ->
                 when (options[which]) {
                     "安装应用" -> {
                         Toast.makeText(this, "正在启动安装程序...", Toast.LENGTH_SHORT).show()
@@ -101,10 +101,10 @@ class CacheManagerActivity : AppCompatActivity() {
     }
 
     private fun showDeleteDialog(file: File) {
-        TvDialogBuilder(this)
+        AlertDialog.Builder(this)
             .setTitle("删除文件")
             .setMessage("确定要删除文件 ${file.name} 吗？")
-            .setPositiveButton("删除", isDanger = true) {
+            .setPositiveButton("删除") { _, _ ->
                 if (file.delete()) {
                     Toast.makeText(this, "删除成功", Toast.LENGTH_SHORT).show()
                     loadFiles()
@@ -118,10 +118,10 @@ class CacheManagerActivity : AppCompatActivity() {
 
     private fun showClearAllDialog() {
         if (fileList.isEmpty()) return
-        TvDialogBuilder(this)
+        AlertDialog.Builder(this)
             .setTitle("一键清空")
             .setMessage("确定要清空所有缓存文件吗？(共 ${fileList.size} 个)")
-            .setPositiveButton("清空", isDanger = true) {
+            .setPositiveButton("清空") { _, _ ->
                 var count = 0
                 for (file in fileList) {
                     if (file.delete()) {

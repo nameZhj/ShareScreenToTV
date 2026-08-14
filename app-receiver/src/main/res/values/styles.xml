@@ -2,15 +2,17 @@
 <resources>
     <style name="AppTheme" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">#000000</item>
-        <item name="alertDialogTheme">@style/TvDialogTheme</item>
+        <item name="alertDialogTheme">@style/CustomAlertDialogTheme</item>
     </style>
 
-    <style name="TvDialogTheme" parent="Theme.AppCompat.Dialog.Alert">
-        <item name="android:background">#212121</item>
+    <style name="CustomAlertDialogTheme" parent="Theme.AppCompat.Dialog.Alert">
+        <!-- TV D-Pad focus selector for AlertDialog lists -->
+        <item name="android:listSelector">@drawable/item_tv_selector</item>
+        <item name="android:listChoiceBackgroundIndicator">@drawable/item_tv_selector</item>
+        <item name="colorAccent">#2979FF</item>
+        <item name="colorControlHighlight">#2979FF</item>
+        <item name="colorControlActivated">#2979FF</item>
         <item name="android:textColorPrimary">#FFFFFF</item>
         <item name="android:textColorSecondary">#CCCCCC</item>
-        <item name="colorAccent">#2979FF</item>
-        <item name="android:windowMinWidthMajor">55%</item>
-        <item name="android:windowMinWidthMinor">55%</item>
     </style>
 </resources>

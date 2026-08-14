@@ -158,9 +158,9 @@ class ReceiverActivity : AppCompatActivity() {
 
     private fun showMainMenuDialog() {
         val items = arrayOf("文件管理", "画面缩放")
-        com.sharescreen.receiver.ui.TvDialogBuilder(this)
+        AlertDialog.Builder(this)
             .setTitle("菜单选项")
-            .setItems(items) { which ->
+            .setItems(items) { _, which ->
                 when (which) {
                     0 -> startActivity(Intent(this, com.sharescreen.receiver.ui.CacheManagerActivity::class.java))
                     1 -> showScaleModeDialog()
@@ -173,13 +173,14 @@ class ReceiverActivity : AppCompatActivity() {
     private fun showScaleModeDialog() {
         val items = arrayOf("默认 (当前投屏状态)", "平铺 (保持比例铺满屏幕)")
         val checkedItem = if (scaleMode == SCALE_MODE_DEFAULT) 0 else 1
-        com.sharescreen.receiver.ui.TvDialogBuilder(this)
+        AlertDialog.Builder(this)
             .setTitle("画面缩放")
-            .setSingleChoiceItems(items, checkedItem) { which ->
+            .setSingleChoiceItems(items, checkedItem) { dialog, which ->
                 scaleMode = if (which == 0) SCALE_MODE_DEFAULT else SCALE_MODE_ASPECT_FIT
                 applyScaleMode()
                 val modeName = if (scaleMode == SCALE_MODE_DEFAULT) "默认模式" else "平铺模式"
                 Toast.makeText(this, "已切换为: $modeName", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
             }
             .setNegativeButton("取消", null)
             .show()
