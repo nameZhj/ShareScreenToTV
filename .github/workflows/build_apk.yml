@@ -60,9 +60,10 @@ jobs:
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            release_apks/手机端.apk
-            release_apks/电视端.apk
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.ref_name }} release_apks/手机端.apk release_apks/电视端.apk --clobber || \
+          gh release create ${{ github.ref_name }} release_apks/手机端.apk release_apks/电视端.apk \
+            --title "Release ${{ github.ref_name }}" \
+            --generate-notes
