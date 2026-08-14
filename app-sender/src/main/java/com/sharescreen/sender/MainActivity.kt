@@ -331,7 +331,7 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxWidth(0.7f).height(52.dp),
                         enabled = !isSharing && !isCastingFile
                     ) {
-                        Text("上传文件到电视 (支持任意文件/APK)")
+                        Text("上传文件到电视")
                     }
                 }
                 
