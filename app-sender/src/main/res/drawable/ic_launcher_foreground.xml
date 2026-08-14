@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Screen icon: a simple rectangle representing a phone screen with a cast symbol -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,30 L72,30 Q76,30 76,34 L76,74 Q76,78 72,78 L36,78 Q32,78 32,74 L32,34 Q32,30 36,30Z" />
+    <path
+        android:fillColor="#1565C0"
+        android:pathData="M40,36 L68,36 L68,68 L40,68 Z" />
+    <!-- WiFi/cast waves -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,68 Q44,58 54,54 Q58,52 54,58 Q50,62 50,68 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,68 Q50,50 68,46 Q72,44 70,50 Q56,54 48,68 Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="0" />
+</vector>
