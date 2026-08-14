@@ -37,20 +37,21 @@ jobs:
       - name: Prepare and rename APKs
         run: |
           mkdir -p release_apks
-          cp app-sender/build/outputs/apk/debug/app-sender-debug.apk release_apks/手机端.apk
-          cp app-receiver/build/outputs/apk/debug/app-receiver-debug.apk release_apks/电视端.apk
+          # Standard names for Releases
+          cp app-sender/build/outputs/apk/debug/app-sender-debug.apk release_apks/ShareScreen-Phone.apk
+          cp app-receiver/build/outputs/apk/debug/app-receiver-debug.apk release_apks/ShareScreen-TV.apk
 
-      - name: Upload 手机端 APK
+      - name: Upload 手机端 APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 手机端
-          path: release_apks/手机端.apk
+          name: 手机端-ShareScreen-Phone
+          path: release_apks/ShareScreen-Phone.apk
 
-      - name: Upload 电视端 APK
+      - name: Upload 电视端 APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 电视端
-          path: release_apks/电视端.apk
+          name: 电视端-ShareScreen-TV
+          path: release_apks/ShareScreen-TV.apk
 
       - name: Upload All APKs Bundle
         uses: actions/upload-artifact@v4
@@ -65,7 +66,16 @@ jobs:
         run: |
           gh release delete ${{ github.ref_name }} --yes || true
           gh release create ${{ github.ref_name }} \
-            release_apks/手机端.apk \
-            release_apks/电视端.apk \
-            --title "Release ${{ github.ref_name }}" \
-            --generate-notes
+            release_apks/ShareScreen-Phone.apk \
+            release_apks/ShareScreen-TV.apk \
+            --title "ShareScreenToTV ${{ github.ref_name }}" \
+            --notes "### 📥 安装包下载 (Downloads)
+          - 📱 **手机端 (Phone App)**: \`ShareScreen-Phone.apk\`
+          - 📺 **电视端 (TV App)**: \`ShareScreen-TV.apk\`
+
+          ---
+          ### ✨ 特性更新
+          - 支持低延迟 H.264 + AAC 音视频硬件编解码投屏
+          - 支持智能识别 Wi-Fi 网卡直连，绕过 VPN 路由冲突
+          - 支持通用大文件与 APK 极速投递及电视端自动安装
+          - 专为电视遥控器优化的焦点高亮系统与等比缩放切换"
