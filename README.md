@@ -111,3 +111,21 @@ cd ShareScreenToTV
 
 - ✅ **允许**：个人、学术研究及非商业性用途的自由使用、修改与分发。
 - ❌ **禁止**：任何以营利、商业变现或商业组织生产经营为目的的使用。
+
+---
+
+## 🙏 致谢与开源组件 (Acknowledgments)
+
+本项目基于以下优秀的开源项目构建，特此致谢：
+
+- **[AndroidX & Jetpack Compose](https://developer.android.com/jetpack)** ([Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)) - 现代化 Android UI 与架构组件
+- **[ZXing Core](https://github.com/zxing/zxing)** ([Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)) - 二维码生成与解析引擎
+- **[ZXing Android Embedded](https://github.com/journeyapps/zxing-android-embedded)** ([Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)) - 快速条码/二维码扫描组件
+- **[Glide](https://github.com/bumptech/glide)** ([BSD / MIT / Apache-2.0](https://github.com/bumptech/glide/blob/master/LICENSE)) - Android 媒体与图片加载引擎
+
+---
+
+## ⚠️ 注意事项 (Notes)
+
+- **小米 / HyperOS 手机投屏相册**：若在共享相册时电视端画面呈现高斯模糊/毛玻璃效果，属于小米 HyperOS 系统级“屏幕共享防护 / 电诈防护”隐私安全策略，可在手机系统设置中关闭对应防护选项后正常投屏。
+- **局域网防火墙**：请确保局域网路由器未开启 AP 隔离（Client Isolation），以便双端端口（TCP 20000, 20003 / UDP 20001, 20002）正常互通。
