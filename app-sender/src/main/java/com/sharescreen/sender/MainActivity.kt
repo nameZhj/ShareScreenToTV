@@ -206,16 +206,17 @@ class MainActivity : ComponentActivity() {
             val json = JSONObject(content)
             val ip = json.getString("ip")
             val port = json.optInt("port", 20000)
-            statusMessage = "正在连接 $ip..."
-            controlClient.connect(ip, onConnected = { w, h ->
+            statusMessage = "正在连接 $ip:$port..."
+            controlClient.connect(ip, port, onConnected = { w, h ->
                 tvIp = ip
                 tvWidth = w
                 tvHeight = h
                 runOnUiThread { statusMessage = "已连接到电视 $ip (${w}x${h})" }
-            }, onError = {
+            }, onError = { errMsg ->
                 runOnUiThread {
                     tvIp = null
-                    statusMessage = "连接失败，请重新扫码"
+                    statusMessage = "连接失败: $errMsg\n请确保电视端App已打开且处于同一局域网"
+                    Toast.makeText(this, "连接失败: $errMsg", Toast.LENGTH_LONG).show()
                 }
             })
         } catch (e: Exception) {

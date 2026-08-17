@@ -14,31 +14,54 @@ class ControlClient {
     private var socket: Socket? = null
     private var writer: PrintWriter? = null
     private var reader: BufferedReader? = null
-    private val CONTROL_PORT = 20000
     private val TAG = "ControlClient"
     var onDisconnected: (() -> Unit)? = null
 
-    fun connect(ip: String, onConnected: (Int, Int) -> Unit, onError: () -> Unit) {
-        thread {
+    fun connect(ip: String, port: Int = 20000, onConnected: (Int, Int) -> Unit, onError: (String) -> Unit) {
+        thread(name = "ControlClient-Connect") {
+            var isConnectionEstablished = false
             try {
-                // Prefer to create the socket through the explicit Wi-Fi Network reference
-                // so it bypasses any active VPN TUN interface on the phone.
-                val sock: Socket = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-                    NetworkBinder.wifiNetwork != null) {
-                    Log.d(TAG, "Creating socket via explicit Wi-Fi network")
-                    NetworkBinder.wifiNetwork!!.socketFactory.createSocket()
-                } else {
-                    Log.d(TAG, "Creating socket via default network")
-                    Socket()
+                var sock: Socket? = null
+                var lastException: Exception? = null
+
+                // Try 1: Prefer Wi-Fi network socket factory to bypass VPN
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && NetworkBinder.wifiNetwork != null) {
+                    try {
+                        val s = NetworkBinder.wifiNetwork!!.socketFactory.createSocket()
+                        s.soTimeout = 5000
+                        s.connect(InetSocketAddress(ip, port), 5000)
+                        sock = s
+                        Log.d(TAG, "Connected via Wi-Fi socketFactory to $ip:$port")
+                    } catch (e: Exception) {
+                        lastException = e
+                        Log.w(TAG, "Wi-Fi socketFactory connection failed: ${e.message}, falling back to default socket")
+                    }
                 }
-                sock.soTimeout = 8000
-                sock.connect(InetSocketAddress(ip, CONTROL_PORT), 8000)
+
+                // Try 2: Standard socket fallback
+                if (sock == null || !sock.isConnected) {
+                    try {
+                        val s = Socket()
+                        s.soTimeout = 5000
+                        s.connect(InetSocketAddress(ip, port), 5000)
+                        sock = s
+                        Log.d(TAG, "Connected via default socket to $ip:$port")
+                    } catch (e: Exception) {
+                        lastException = e
+                        Log.e(TAG, "Default socket connection failed: ${e.message}")
+                    }
+                }
+
+                if (sock == null || !sock.isConnected) {
+                    val msg = lastException?.localizedMessage ?: "无法连接到电视 ($ip:$port)"
+                    onError(msg)
+                    return@thread
+                }
+
                 socket = sock
-                writer = PrintWriter(socket!!.outputStream, true)
-                reader = BufferedReader(InputStreamReader(socket!!.inputStream))
-                
-                Log.d(TAG, "Connected to control server at $ip")
-                
+                writer = PrintWriter(sock.outputStream, true)
+                reader = BufferedReader(InputStreamReader(sock.inputStream))
+
                 // Request resolution
                 writer?.println("GET_RESOLUTION")
                 val response = reader?.readLine()
@@ -47,11 +70,13 @@ class ControlClient {
                     val width = json.getInt("width")
                     val height = json.getInt("height")
                     Log.d(TAG, "TV Resolution: ${width}x${height}")
-                    // Reset read timeout so idle connection doesn't throw timeout exceptions
+
                     try {
-                        socket?.soTimeout = 0
-                        socket?.keepAlive = true
+                        sock.soTimeout = 0
+                        sock.keepAlive = true
                     } catch (_: Exception) {}
+
+                    isConnectionEstablished = true
                     onConnected(width, height)
 
                     // Monitor connection health; when connection drops, trigger onDisconnected
@@ -62,18 +87,22 @@ class ControlClient {
                     Log.d(TAG, "Control server connection closed")
                     onDisconnected?.invoke()
                 } else {
-                    onError()
+                    onError("未能获取电视端分辨率响应")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Control client connection failed/ended: ${e.message}")
-                onError()
-                onDisconnected?.invoke()
+                Log.e(TAG, "Control client exception: ${e.message}")
+                if (isConnectionEstablished) {
+                    onDisconnected?.invoke()
+                } else {
+                    val errMsg = e.localizedMessage ?: "连接失败"
+                    onError(errMsg)
+                }
             }
         }
     }
 
     fun disconnect() {
-        thread {
+        thread(name = "ControlClient-Disconnect") {
             try {
                 writer?.println("STOP")
                 socket?.close()
