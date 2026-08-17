@@ -13,17 +13,28 @@ class FileSender {
     private val TAG = "FileSender"
     private val FILE_PORT = 20003
 
+    private fun createSocket(ip: String, timeoutMs: Int): Socket {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M && NetworkBinder.wifiNetwork != null) {
+            try {
+                val s = NetworkBinder.wifiNetwork!!.socketFactory.createSocket()
+                s.soTimeout = timeoutMs
+                s.connect(InetSocketAddress(ip, FILE_PORT), timeoutMs)
+                return s
+            } catch (e: Exception) {
+                Log.w(TAG, "Wi-Fi socketFactory failed: ${e.message}, trying default socket")
+            }
+        }
+        val s = Socket()
+        s.soTimeout = timeoutMs
+        s.connect(InetSocketAddress(ip, FILE_PORT), timeoutMs)
+        return s
+    }
+
     suspend fun sendFile(context: Context, ip: String, uri: Uri, onProgress: (Int) -> Unit): Boolean = withContext(Dispatchers.IO) {
         var socketRef: Socket? = null
         try {
-            val socket = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M && NetworkBinder.wifiNetwork != null) {
-                NetworkBinder.wifiNetwork!!.socketFactory.createSocket()
-            } else {
-                Socket()
-            }
+            val socket = createSocket(ip, 15000)
             socketRef = socket
-            socket.soTimeout = 15000
-            socket.connect(InetSocketAddress(ip, FILE_PORT), 15000)
 
             val contentResolver = context.contentResolver
             var fileName = "uploaded_file"
@@ -94,17 +105,13 @@ class FileSender {
     suspend fun stopCasting(ip: String) = withContext(Dispatchers.IO) {
         var socketRef: Socket? = null
         try {
-            val socket = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M && NetworkBinder.wifiNetwork != null) {
-                NetworkBinder.wifiNetwork!!.socketFactory.createSocket()
-            } else {
-                Socket()
-            }
+            val socket = createSocket(ip, 5000)
             socketRef = socket
-            socket.connect(InetSocketAddress(ip, FILE_PORT), 5000)
             val out = DataOutputStream(socket.outputStream)
             out.writeUTF("STOP")
             out.writeLong(0)
             out.flush()
+            Log.d(TAG, "Successfully sent STOP media command to $ip:$FILE_PORT")
         } catch (e: Exception) {
             Log.e(TAG, "Stop cast error: ${e.message}")
         } finally {

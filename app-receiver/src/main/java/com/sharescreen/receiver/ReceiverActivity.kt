@@ -402,6 +402,7 @@ class ReceiverActivity : AppCompatActivity() {
         videoUdpReceiver?.onVideoFrameReceived = { data, pts ->
             lastVideoFrameTime = System.currentTimeMillis()
             hideQrOverlay()
+            MediaPlaybackActivity.stopCurrentPlayback()
             videoDecoder?.queueInputBuffer(data, pts)
         }
         videoUdpReceiver?.start()
@@ -420,8 +421,14 @@ class ReceiverActivity : AppCompatActivity() {
             startActivity(intent)
         }, onStopRequested = {
             runOnUiThread {
-                val intent = Intent("com.sharescreen.ACTION_STOP_MEDIA")
-                sendBroadcast(intent)
+                MediaPlaybackActivity.stopCurrentPlayback()
+                val intent = Intent("com.sharescreen.ACTION_STOP_MEDIA").apply {
+                    setPackage(packageName)
+                }
+                androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
+                try {
+                    sendBroadcast(intent)
+                } catch (_: Exception) {}
             }
         })
     }
