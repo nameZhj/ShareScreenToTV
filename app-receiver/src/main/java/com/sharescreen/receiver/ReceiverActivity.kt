@@ -1,6 +1,7 @@
 package com.sharescreen.receiver
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.ConnectivityManager
@@ -11,14 +12,20 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.util.DisplayMetrics
+import android.util.Log
+import android.view.KeyEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
 import android.view.WindowManager
+import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.constraintlayout.widget.ConstraintLayout
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -26,13 +33,8 @@ import com.sharescreen.receiver.codec.AudioDecoder
 import com.sharescreen.receiver.codec.VideoDecoder
 import com.sharescreen.receiver.network.ControlServer
 import com.sharescreen.receiver.network.DeviceDiscoveryService
-import com.sharescreen.receiver.network.UdpReceiver
 import com.sharescreen.receiver.network.FileReceiver
-import android.content.Intent
-import android.view.KeyEvent
-import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
-import androidx.constraintlayout.widget.ConstraintLayout
+import com.sharescreen.receiver.network.UdpReceiver
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
@@ -42,13 +44,14 @@ class ReceiverActivity : AppCompatActivity() {
     private lateinit var qrCard: LinearLayout
     private lateinit var ivQrCode: ImageView
     private lateinit var tvIpAddress: TextView
-    private lateinit var btnManageCache: android.widget.Button
+    private lateinit var btnManageCache: Button
 
     private var isNetworkBound = false
     private var isServersStarted = false
     private var currentIp: String? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     @Volatile private var lastVideoFrameTime = 0L
+    @Volatile private var isStreaming = false
     private var discoveryService: DeviceDiscoveryService? = null
     private var controlServer: ControlServer? = null
     private var videoUdpReceiver: UdpReceiver? = null
@@ -56,6 +59,8 @@ class ReceiverActivity : AppCompatActivity() {
     private var fileReceiver: FileReceiver? = null
     private var videoDecoder: VideoDecoder? = null
     private var audioDecoder: AudioDecoder? = null
+
+    private val TAG = "ReceiverActivity"
 
     // Scaling mode
     companion object {
@@ -107,20 +112,35 @@ class ReceiverActivity : AppCompatActivity() {
 
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
-                videoDecoder = VideoDecoder(holder.surface)
-                videoDecoder?.onVideoSizeChanged = { vw, vh ->
-                    currentVideoWidth = vw
-                    currentVideoHeight = vh
-                    runOnUiThread { applyScaleMode() }
+                try {
+                    videoDecoder?.stop()
+                    videoDecoder = VideoDecoder(holder.surface).apply {
+                        onVideoSizeChanged = { vw, vh ->
+                            currentVideoWidth = vw
+                            currentVideoHeight = vh
+                            runOnUiThread { applyScaleMode() }
+                        }
+                        start(screenWidth, screenHeight)
+                    }
+
+                    audioDecoder?.stop()
+                    audioDecoder = AudioDecoder().apply {
+                        start()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error initializing decoders on surfaceCreated: ${e.message}", e)
                 }
-                videoDecoder?.start(screenWidth, screenHeight)
-                audioDecoder = AudioDecoder()
-                audioDecoder?.start()
             }
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {}
             override fun surfaceDestroyed(holder: SurfaceHolder) {
-                videoDecoder?.stop(); videoDecoder = null
-                audioDecoder?.stop(); audioDecoder = null
+                try {
+                    videoDecoder?.stop()
+                    videoDecoder = null
+                    audioDecoder?.stop()
+                    audioDecoder = null
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error cleaning decoders on surfaceDestroyed: ${e.message}", e)
+                }
             }
         })
 
@@ -188,35 +208,26 @@ class ReceiverActivity : AppCompatActivity() {
 
     private fun applyScaleMode() {
         val lp = surfaceView.layoutParams as? ConstraintLayout.LayoutParams ?: return
+        var targetW = 0
+        var targetH = 0
+
         if (scaleMode == SCALE_MODE_ASPECT_FIT && currentVideoWidth > 0 && currentVideoHeight > 0) {
-            // Keep original aspect ratio while longest side fills the screen (aspect fit)
             val scale = minOf(
                 screenWidth.toFloat() / currentVideoWidth.toFloat(),
                 screenHeight.toFloat() / currentVideoHeight.toFloat()
             )
-            val targetW = (currentVideoWidth * scale).toInt()
-            val targetH = (currentVideoHeight * scale).toInt()
+            targetW = (currentVideoWidth * scale).toInt()
+            targetH = (currentVideoHeight * scale).toInt()
+        }
 
+        if (lp.width != targetW || lp.height != targetH) {
             lp.width = targetW
             lp.height = targetH
-            lp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
-            lp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID
-            lp.startToStart = ConstraintLayout.LayoutParams.PARENT_ID
-            lp.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID
-        } else {
-            // Default: stretch to match parent constraints
-            lp.width = 0
-            lp.height = 0
-            lp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
-            lp.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID
-            lp.startToStart = ConstraintLayout.LayoutParams.PARENT_ID
-            lp.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID
+            surfaceView.layoutParams = lp
         }
-        surfaceView.layoutParams = lp
     }
 
     private fun getWifiIpAddress(): String? {
-        // Try WifiManager first (most reliable on Android)
         try {
             @Suppress("DEPRECATION")
             val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -232,7 +243,6 @@ class ReceiverActivity : AppCompatActivity() {
             }
         } catch (_: Exception) {}
 
-        // Fallback: iterate network interfaces
         try {
             val interfaces = NetworkInterface.getNetworkInterfaces()
             while (interfaces.hasMoreElements()) {
@@ -261,7 +271,6 @@ class ReceiverActivity : AppCompatActivity() {
     }
 
     private fun showQrCode(ip: String) {
-        // Encode connection info as JSON for the phone scanner
         val payload = """{"ip":"$ip","port":20000}"""
         runOnUiThread {
             try {
@@ -293,10 +302,19 @@ class ReceiverActivity : AppCompatActivity() {
         }
     }
 
+    private fun hideQrOverlay() {
+        if (!isStreaming) {
+            isStreaming = true
+            runOnUiThread {
+                qrCard.visibility = View.GONE
+                tvStatus.visibility = View.GONE
+            }
+        }
+    }
+
     private fun bindToNetworkAndStartServers(width: Int, height: Int) {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-        // Try to find and bind to Wi-Fi network immediately (works even with VPN active)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val wifiNet = cm.allNetworks.firstOrNull { net ->
                 cm.getNetworkCapabilities(net)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
@@ -309,7 +327,6 @@ class ReceiverActivity : AppCompatActivity() {
 
         startServersWithIp(width, height)
 
-        // Continuous network monitoring for automatic IP / network interface switching
         val request = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
@@ -365,16 +382,13 @@ class ReceiverActivity : AppCompatActivity() {
         discoveryService?.start()
 
         controlServer = ControlServer(width, height)
-        controlServer?.onClientConnected = { clientIp ->
-            runOnUiThread {
-                qrCard.visibility = View.GONE
-                tvStatus.visibility = View.GONE
-            }
+        controlServer?.onClientConnected = {
+            hideQrOverlay()
         }
         controlServer?.onClientDisconnected = {
             runOnUiThread {
-                // Only restore QR code if we haven't received video frames recently
                 if (System.currentTimeMillis() - lastVideoFrameTime > 2000) {
+                    isStreaming = false
                     tvStatus.text = "Waiting for connection..."
                     val currentIp = getWifiIpAddress()
                     if (currentIp != null) showQrCode(currentIp)
@@ -387,24 +401,14 @@ class ReceiverActivity : AppCompatActivity() {
         videoUdpReceiver = UdpReceiver(20001)
         videoUdpReceiver?.onVideoFrameReceived = { data, pts ->
             lastVideoFrameTime = System.currentTimeMillis()
-            if (qrCard.visibility != View.GONE || tvStatus.visibility != View.GONE) {
-                runOnUiThread {
-                    qrCard.visibility = View.GONE
-                    tvStatus.visibility = View.GONE
-                }
-            }
+            hideQrOverlay()
             videoDecoder?.queueInputBuffer(data, pts)
         }
         videoUdpReceiver?.start()
 
         audioUdpReceiver = UdpReceiver(20002)
         audioUdpReceiver?.onAudioFrameReceived = { data, pts ->
-            if (qrCard.visibility != View.GONE || tvStatus.visibility != View.GONE) {
-                runOnUiThread {
-                    qrCard.visibility = View.GONE
-                    tvStatus.visibility = View.GONE
-                }
-            }
+            hideQrOverlay()
             audioDecoder?.queueInputBuffer(data, pts)
         }
         audioUdpReceiver?.start()
