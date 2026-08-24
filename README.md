@@ -1,6 +1,6 @@
 # ShareScreenToTV 📺📱
 
-[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-blue.svg)](https://polyformproject.org/licenses/noncommercial/1.0.0/)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.22-purple.svg)](https://kotlinlang.org/)
 [![Android](https://img.shields.io/badge/Platform-Android_TV_%26_Mobile-green.svg)](https://developer.android.com/)
 
@@ -95,10 +95,10 @@ cd ShareScreenToTV
 
 ## 📄 许可证 (License)
 
-本项目采用 **[PolyForm Noncommercial License 1.0.0](LICENSE)** 许可证。
+本项目采用 **[GNU General Public License v3.0 (GPL-3.0)](LICENSE)** 开源许可证。
 
-- ✅ **允许**：个人、学术研究及非商业性用途的自由使用、修改与分发。
-- ❌ **禁止**：任何以营利、商业变现或商业组织生产经营为目的的使用。
+- 只要保留原版权信息和许可声明，任何人均可自由使用、学习、修改及分发。
+- 若修改或使用了本项目代码并对外分发/发布，其衍生作品也必须在 GPL v3.0 协议下开源并提供完整源代码。
 
 ---
 
