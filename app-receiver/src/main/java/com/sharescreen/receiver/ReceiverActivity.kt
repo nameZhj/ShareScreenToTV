@@ -37,6 +37,8 @@ import com.sharescreen.receiver.network.FileReceiver
 import com.sharescreen.receiver.network.UdpReceiver
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import java.security.SecureRandom
+import org.json.JSONObject
 
 class ReceiverActivity : AppCompatActivity() {
     private lateinit var surfaceView: SurfaceView
@@ -49,8 +51,9 @@ class ReceiverActivity : AppCompatActivity() {
     private var isNetworkBound = false
     private var isServersStarted = false
     private var currentIp: String? = null
+    private val pairingToken: String = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        .joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    @Volatile private var lastVideoFrameTime = 0L
     @Volatile private var isStreaming = false
     private var discoveryService: DeviceDiscoveryService? = null
     private var controlServer: ControlServer? = null
@@ -228,6 +231,27 @@ class ReceiverActivity : AppCompatActivity() {
     }
 
     private fun getWifiIpAddress(): String? {
+        // Prefer addresses belonging to an actual Wi-Fi/Ethernet Android Network.
+        // Interface enumeration can otherwise pick VPN, cellular, or virtual adapters.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                val candidates = (listOfNotNull(cm.activeNetwork) + cm.allNetworks.toList()).distinct()
+                for (network in candidates) {
+                    val capabilities = cm.getNetworkCapabilities(network) ?: continue
+                    if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                        !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+                    ) continue
+                    val address = cm.getLinkProperties(network)?.linkAddresses
+                        ?.mapNotNull { it.address as? Inet4Address }
+                        ?.firstOrNull { !it.isLoopbackAddress && !it.isLinkLocalAddress }
+                    if (address != null) return address.hostAddress
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Unable to read active network address: " + e.message)
+            }
+        }
+
         try {
             @Suppress("DEPRECATION")
             val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -271,7 +295,11 @@ class ReceiverActivity : AppCompatActivity() {
     }
 
     private fun showQrCode(ip: String) {
-        val payload = """{"ip":"$ip","port":20000}"""
+        val payload = JSONObject()
+            .put("ip", ip)
+            .put("port", 20000)
+            .put("token", pairingToken)
+            .toString()
         runOnUiThread {
             try {
                 val qrBitmap = generateQrCode(payload, 600)
@@ -381,23 +409,25 @@ class ReceiverActivity : AppCompatActivity() {
         discoveryService = DeviceDiscoveryService()
         discoveryService?.start()
 
-        controlServer = ControlServer(width, height)
-        controlServer?.onClientConnected = {
+        controlServer = ControlServer(width, height, pairingToken)
+        controlServer?.onClientConnected = { clientIp ->
+            videoUdpReceiver?.allowedSenderIp = clientIp
+            audioUdpReceiver?.allowedSenderIp = clientIp
+            fileReceiver?.allowedSenderIp = clientIp
             hideQrOverlay()
         }
         controlServer?.onClientDisconnected = {
             runOnUiThread {
-                if (System.currentTimeMillis() - lastVideoFrameTime > 2000) {
-                    isStreaming = false
-                    tvStatus.text = "Waiting for connection..."
-                    val currentIp = getWifiIpAddress()
-                    if (currentIp != null) showQrCode(currentIp)
-                    else qrCard.visibility = View.VISIBLE
-                }
+                videoUdpReceiver?.allowedSenderIp = null
+                audioUdpReceiver?.allowedSenderIp = null
+                fileReceiver?.allowedSenderIp = null
+                isStreaming = false
+                tvStatus.text = "Waiting for connection..."
+                val currentIp = getWifiIpAddress()
+                if (currentIp != null) showQrCode(currentIp)
+                else qrCard.visibility = View.VISIBLE
             }
         }
-        controlServer?.start()
-
         videoUdpReceiver = UdpReceiver(20001)
         videoUdpReceiver?.onVideoFrameReceived = { data, pts ->
             lastVideoFrameTime = System.currentTimeMillis()
@@ -415,22 +445,24 @@ class ReceiverActivity : AppCompatActivity() {
         audioUdpReceiver?.start()
 
         fileReceiver = FileReceiver()
-        fileReceiver?.startListening(this, onFileReceived = { file ->
-            val intent = Intent(this, MediaPlaybackActivity::class.java)
-            intent.putExtra(MediaPlaybackActivity.EXTRA_FILE_PATH, file.absolutePath)
-            startActivity(intent)
+        fileReceiver?.startListening(this, pairingToken, onFileReceived = { file ->
+            runOnUiThread {
+                val intent = Intent(this, MediaPlaybackActivity::class.java)
+                intent.putExtra(MediaPlaybackActivity.EXTRA_FILE_PATH, file.absolutePath)
+                startActivity(intent)
+            }
         }, onStopRequested = {
             runOnUiThread {
                 MediaPlaybackActivity.stopCurrentPlayback()
                 val intent = Intent("com.sharescreen.ACTION_STOP_MEDIA").apply {
                     setPackage(packageName)
                 }
-                androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
-                try {
-                    sendBroadcast(intent)
-                } catch (_: Exception) {}
+                sendBroadcast(intent)
             }
         })
+        // Bind the control port last so an immediately scanned QR can never authenticate
+        // before UDP/file receivers are ready to accept the paired sender.
+        controlServer?.start()
     }
 
     override fun onDestroy() {

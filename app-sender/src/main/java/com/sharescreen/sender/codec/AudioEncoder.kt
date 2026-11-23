@@ -27,6 +27,7 @@ class AudioEncoder {
     @SuppressLint("MissingPermission")
     fun start(mediaProjection: MediaProjection) {
         val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
+        check(minBufferSize > 0) { "AudioRecord 不支持当前采样率或声道配置" }
         val config = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
             .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
             .addMatchingUsage(AudioAttributes.USAGE_GAME)
@@ -44,10 +45,12 @@ class AudioEncoder {
             .setBufferSizeInBytes(minBufferSize * 2)
             .setAudioPlaybackCaptureConfig(config)
             .build()
+        check(audioRecord?.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord 初始化失败" }
 
         setupEncoder()
 
         audioRecord?.startRecording()
+        check(audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) { "AudioRecord 无法开始录音" }
         isRunning = true
 
         Thread {
@@ -56,6 +59,9 @@ class AudioEncoder {
                 val readResult = audioRecord?.read(pcmBuffer, 0, pcmBuffer.size) ?: -1
                 if (readResult > 0) {
                     encode(pcmBuffer, readResult)
+                } else if (readResult < 0) {
+                    if (readResult == AudioRecord.ERROR_DEAD_OBJECT) break
+                    try { Thread.sleep(10) } catch (_: InterruptedException) { break }
                 }
             }
         }.start()
@@ -74,12 +80,9 @@ class AudioEncoder {
                             val data = ByteArray(bufferInfo.size)
                             outputBuffer.get(data)
                             
-                            val packetLen = bufferInfo.size + 7
-                            val packet = ByteArray(packetLen)
-                            addAdtsHeader(packet, packetLen)
-                            System.arraycopy(data, 0, packet, 7, data.size)
-                            
-                            onEncodedFrame?.invoke(packet, bufferInfo.presentationTimeUs)
+                            // The receiver configures AAC with AudioSpecificConfig (csd-0),
+                            // so transport raw AAC access units, not ADTS-framed packets.
+                            onEncodedFrame?.invoke(data, bufferInfo.presentationTimeUs)
                         }
                         mediaCodec?.releaseOutputBuffer(outIndex, false)
                     }
@@ -110,19 +113,6 @@ class AudioEncoder {
             val pts = System.nanoTime() / 1000
             mediaCodec?.queueInputBuffer(inputIndex, 0, length, pts, 0)
         }
-    }
-
-    private fun addAdtsHeader(packet: ByteArray, packetLen: Int) {
-        val profile = 2 // AAC LC
-        val freqIdx = 4 // 44.1KHz
-        val chanCfg = 2 // CPE (Stereo)
-        packet[0] = 0xFF.toByte()
-        packet[1] = 0xF9.toByte()
-        packet[2] = (((profile - 1) shl 6) + (freqIdx shl 2) + (chanCfg shr 2)).toByte()
-        packet[3] = (((chanCfg and 3) shl 6) + (packetLen shr 11)).toByte()
-        packet[4] = ((packetLen and 0x7FF) shr 3).toByte()
-        packet[5] = (((packetLen and 7) shl 5) + 0x1F).toByte()
-        packet[6] = 0xFC.toByte()
     }
 
     fun stop() {

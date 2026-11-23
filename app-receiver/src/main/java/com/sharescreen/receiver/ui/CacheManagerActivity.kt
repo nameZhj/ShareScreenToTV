@@ -146,7 +146,10 @@ class CacheManagerActivity : AppCompatActivity() {
 
             init {
                 view.setOnClickListener {
-                    onItemClick(files[adapterPosition])
+                    val position = adapterPosition
+                    if (position != RecyclerView.NO_POSITION && position in files.indices) {
+                        onItemClick(files[position])
+                    }
                 }
             }
         }

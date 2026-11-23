@@ -34,6 +34,7 @@ import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     private var tvIp: String? by mutableStateOf(null)
+    private var tvToken: String? by mutableStateOf(null)
     private var tvWidth: Int = 1920
     private var tvHeight: Int = 1080
     private var isSharing by mutableStateOf(false)
@@ -107,6 +108,8 @@ class MainActivity : ComponentActivity() {
             runOnUiThread {
                 if (tvIp != null) {
                     stopCaptureService()
+                    fileSender.cancelTransfer()
+                    tvToken = null
                     tvIp = null
                     isSharing = false
                     isCastingFile = false
@@ -129,6 +132,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        controlClient.disconnect()
+        fileSender.cancelTransfer()
         super.onDestroy()
         try {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -176,14 +181,21 @@ class MainActivity : ComponentActivity() {
             }
 
             override fun onLinkPropertiesChanged(network: Network, linkProperties: android.net.LinkProperties) {
-                updateWifiNetwork(network, true)
+                updateWifiNetwork(network)
             }
 
             override fun onLost(network: Network) {
+                if (NetworkBinder.wifiNetwork == network) {
+                    NetworkBinder.wifiNetwork = null
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) cm.bindProcessToNetwork(null)
+                }
                 runOnUiThread {
                     Toast.makeText(this@MainActivity, "Wi-Fi网络已断开", Toast.LENGTH_SHORT).show()
                     if (tvIp != null) {
+                        controlClient.disconnect()
+                        fileSender.cancelTransfer()
                         stopCaptureService()
+                        tvToken = null
                         tvIp = null
                         isSharing = false
                         isCastingFile = false
@@ -206,14 +218,21 @@ class MainActivity : ComponentActivity() {
             val json = JSONObject(content)
             val ip = json.getString("ip")
             val port = json.optInt("port", 20000)
+            require(port in 1..65535) { "端口号无效" }
+            val token = json.getString("token")
+            require(token.matches(Regex("[0-9a-fA-F]{64}"))) { "二维码缺少有效配对密钥" }
             statusMessage = "正在连接 $ip:$port..."
-            controlClient.connect(ip, port, onConnected = { w, h ->
-                tvIp = ip
-                tvWidth = w
-                tvHeight = h
-                runOnUiThread { statusMessage = "已连接到电视 $ip (${w}x${h})" }
+            controlClient.connect(ip, port, token, onConnected = { w, h ->
+                runOnUiThread {
+                    tvIp = ip
+                    tvToken = token
+                    tvWidth = w
+                    tvHeight = h
+                    statusMessage = "已连接到电视 $ip (${w}x${h})"
+                }
             }, onError = { errMsg ->
                 runOnUiThread {
+                    tvToken = null
                     tvIp = null
                     statusMessage = "连接失败: $errMsg\n请确保电视端App已打开且处于同一局域网"
                     Toast.makeText(this, "连接失败: $errMsg", Toast.LENGTH_LONG).show()
@@ -339,7 +358,13 @@ class MainActivity : ComponentActivity() {
                 Spacer(modifier = Modifier.height(16.dp))
                 OutlinedButton(
                     onClick = {
+                        fileSender.cancelTransfer()
+                        controlClient.disconnect()
+                        if (isSharing) stopCaptureService()
+                        tvToken = null
                         tvIp = null
+                        isCastingFile = false
+                        isUploadingFile = false
                         statusMessage = "请扫描电视上的二维码连接"
                     },
                     modifier = Modifier.fillMaxWidth(0.7f)
@@ -378,35 +403,41 @@ class MainActivity : ComponentActivity() {
 
     private fun startFileCasting(uri: android.net.Uri) {
         val ip = tvIp ?: return
+        val token = tvToken ?: return
         isCastingFile = true
         fileCastProgress = 0
         lifecycleScope.launch {
-            val success = fileSender.sendFile(this@MainActivity, ip, uri) { progress ->
+            val success = fileSender.sendFile(this@MainActivity, ip, token, uri) { progress ->
                 fileCastProgress = progress
             }
-            if (success) {
-                runOnUiThread { Toast.makeText(this@MainActivity, "文件传输完成", Toast.LENGTH_SHORT).show() }
-            } else {
-                runOnUiThread { Toast.makeText(this@MainActivity, "文件传输失败", Toast.LENGTH_SHORT).show() }
+            runOnUiThread {
                 isCastingFile = false
+                Toast.makeText(
+                    this@MainActivity,
+                    if (success) "文件传输完成" else "文件传输失败",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         }
     }
 
     private fun stopFileCasting() {
         val ip = tvIp ?: return
+        val token = tvToken ?: return
+        fileSender.cancelTransfer()
         lifecycleScope.launch {
-            fileSender.stopCasting(ip)
+            fileSender.stopCasting(ip, token)
             isCastingFile = false
         }
     }
 
     private fun uploadFileToTv(uri: android.net.Uri) {
         val ip = tvIp ?: return
+        val token = tvToken ?: return
         isUploadingFile = true
         uploadFileProgress = 0
         lifecycleScope.launch {
-            val success = fileSender.sendFile(this@MainActivity, ip, uri) { progress ->
+            val success = fileSender.sendFile(this@MainActivity, ip, token, uri) { progress ->
                 uploadFileProgress = progress
             }
             runOnUiThread {
@@ -421,10 +452,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopFileUpload() {
-        val ip = tvIp ?: return
-        lifecycleScope.launch {
-            fileSender.stopCasting(ip)
-            isUploadingFile = false
-        }
+        fileSender.cancelTransfer()
+        isUploadingFile = false
+        Toast.makeText(this, "已取消文件上传", Toast.LENGTH_SHORT).show()
     }
 }

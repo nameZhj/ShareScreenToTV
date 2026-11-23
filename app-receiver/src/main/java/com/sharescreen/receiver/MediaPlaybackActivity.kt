@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
+import android.media.MediaPlayer
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -12,10 +13,12 @@ import android.view.KeyEvent
 import android.view.Window
 import android.view.WindowManager
 import android.widget.ImageView
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.MediaController
 import android.widget.VideoView
 import androidx.appcompat.app.AppCompatActivity
-import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.bumptech.glide.Glide
 import java.io.File
 import java.lang.ref.WeakReference
@@ -30,12 +33,18 @@ class MediaPlaybackActivity : AppCompatActivity() {
 
         fun stopCurrentPlayback() {
             try {
-                currentInstance?.get()?.finish()
+                currentInstance?.get()?.let { activity ->
+                    activity.runOnUiThread {
+                        if (!activity.isFinishing) activity.finish()
+                    }
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error stopping playback instance: ${e.message}")
             }
         }
     }
+
+    private var mediaPlayer: MediaPlayer? = null
 
     private val stopReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -68,31 +77,68 @@ class MediaPlaybackActivity : AppCompatActivity() {
             return
         }
 
-        if (filePath.endsWith(".mp4", ignoreCase = true) || filePath.endsWith(".mkv", ignoreCase = true)) {
+        val extension = file.extension.lowercase()
+        if (extension in setOf("mp4", "mkv", "avi", "mov", "flv", "webm", "3gp", "wmv", "ts")) {
             val videoView = VideoView(this)
             setContentView(videoView)
-            
+
             val mediaController = MediaController(this)
             mediaController.setAnchorView(videoView)
             videoView.setMediaController(mediaController)
             videoView.setVideoURI(Uri.fromFile(file))
-            videoView.setOnCompletionListener {
-                finish()
-            }
+            videoView.setOnCompletionListener { finish() }
             videoView.start()
+        } else if (extension in setOf("mp3", "wav", "aac", "flac", "ogg", "m4a")) {
+            val container = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = android.view.Gravity.CENTER
+                setPadding(32, 32, 32, 32)
+            }
+            container.addView(TextView(this).apply {
+                text = file.name
+                textSize = 20f
+                gravity = android.view.Gravity.CENTER
+            })
+            val playButton = Button(this).apply { text = "正在准备音频..." }
+            container.addView(playButton)
+            setContentView(container)
+
+            mediaPlayer = MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                setOnPreparedListener { player ->
+                    playButton.text = "暂停"
+                    playButton.isEnabled = true
+                    player.start()
+                }
+                setOnCompletionListener { finish() }
+                setOnErrorListener { _, what, extra ->
+                    Log.e(TAG, "Audio playback error: " + what + "/" + extra)
+                    finish()
+                    true
+                }
+                prepareAsync()
+            }
+            playButton.isEnabled = false
+            playButton.setOnClickListener {
+                val player = mediaPlayer ?: return@setOnClickListener
+                if (player.isPlaying) {
+                    player.pause()
+                    playButton.text = "播放"
+                } else {
+                    player.start()
+                    playButton.text = "暂停"
+                }
+            }
         } else {
             val imageView = ImageView(this)
             imageView.scaleType = ImageView.ScaleType.FIT_CENTER
             setContentView(imageView)
-            
+
             Glide.with(this)
                 .load(file)
                 .into(imageView)
         }
         
-        // Register LocalBroadcastManager for intra-app communication
-        LocalBroadcastManager.getInstance(this).registerReceiver(stopReceiver, IntentFilter(ACTION_STOP_MEDIA))
-
         // Register Global broadcast receiver with explicit flag
         try {
             val filter = IntentFilter(ACTION_STOP_MEDIA)
@@ -120,7 +166,8 @@ class MediaPlaybackActivity : AppCompatActivity() {
         if (currentInstance?.get() == this) {
             currentInstance = null
         }
-        try { LocalBroadcastManager.getInstance(this).unregisterReceiver(stopReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(stopReceiver) } catch (_: Exception) {}
+        try { mediaPlayer?.release() } catch (_: Exception) {}
+        mediaPlayer = null
     }
 }
