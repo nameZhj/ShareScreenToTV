@@ -430,7 +430,6 @@ class ReceiverActivity : AppCompatActivity() {
         }
         videoUdpReceiver = UdpReceiver(20001)
         videoUdpReceiver?.onVideoFrameReceived = { data, pts ->
-            lastVideoFrameTime = System.currentTimeMillis()
             hideQrOverlay()
             MediaPlaybackActivity.stopCurrentPlayback()
             videoDecoder?.queueInputBuffer(data, pts)
