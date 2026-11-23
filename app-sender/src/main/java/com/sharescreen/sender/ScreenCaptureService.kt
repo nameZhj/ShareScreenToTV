@@ -20,6 +20,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.sharescreen.sender.codec.AudioEncoder
 import com.sharescreen.sender.codec.VideoEncoder
+import com.sharescreen.sender.network.NetworkBinder
 import com.sharescreen.sender.network.UdpSender
 
 class ScreenCaptureService : Service() {
@@ -41,6 +42,11 @@ class ScreenCaptureService : Service() {
         const val EXTRA_WIDTH = "EXTRA_WIDTH"
         const val EXTRA_HEIGHT = "EXTRA_HEIGHT"
         private const val TAG = "ScreenCaptureService"
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        NetworkBinder.start(applicationContext)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

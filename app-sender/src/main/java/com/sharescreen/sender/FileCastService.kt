@@ -80,6 +80,7 @@ class FileCastService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        NetworkBinder.start(applicationContext)
         createNotificationChannel()
     }
 
@@ -172,7 +173,7 @@ class FileCastService : Service() {
             when {
                 cancelRequested.get() -> finishTransfer(STATE_CANCELLED, lastProgress.coerceAtLeast(0), "传输已取消")
                 success -> finishTransfer(STATE_COMPLETED, 100, "已发送到电视，电视端可独立播放")
-                else -> finishTransfer(STATE_FAILED, lastProgress.coerceAtLeast(0), "传输失败，请检查网络后重试")
+                else -> finishTransfer(STATE_FAILED, lastProgress.coerceAtLeast(0), "传输失败，请检查网络，或确认 VPN 已允许局域网访问后重试")
             }
         }
     }

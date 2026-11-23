@@ -13,7 +13,6 @@ import java.io.DataOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicReference
 
@@ -23,22 +22,8 @@ class FileSender {
     private val minimumFreeSpaceBytes = 32L * 1024L * 1024L
     private val activeTransferSocket = AtomicReference<Socket?>(null)
 
-    private fun createSocket(ip: String, timeoutMs: Int): Socket {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            val network = NetworkBinder.wifiNetwork
-            if (network != null) {
-                val candidate = network.socketFactory.createSocket()
-                try {
-                    candidate.connect(InetSocketAddress(ip, filePort), timeoutMs)
-                    return candidate
-                } catch (e: Exception) {
-                    try { candidate.close() } catch (_: Exception) {}
-                    Log.w(tag, "Wi-Fi socket connection failed: " + e.message)
-                }
-            }
-        }
-        return Socket().apply { connect(InetSocketAddress(ip, filePort), timeoutMs) }
-    }
+    private fun createSocket(ip: String, timeoutMs: Int): Socket =
+        NetworkBinder.createTcpSocket(ip, filePort, timeoutMs)
 
     suspend fun sendFile(
         context: Context,
@@ -81,11 +66,10 @@ class FileSender {
                             val count = input.read(buffer)
                             if (count < 0) break
                             if (count == 0) continue
-                            total += count
-                            if (count.toLong() > availableForStaging - total) {
+                            total += count.toLong()
+                            if (total > availableForStaging) {
                                 throw IllegalStateException("手机可用空间不足，无法暂存完整文件")
                             }
-                            total += count.toLong()
                             output.write(buffer, 0, count)
                         }
                     }

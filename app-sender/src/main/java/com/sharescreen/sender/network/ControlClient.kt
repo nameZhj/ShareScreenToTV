@@ -1,13 +1,11 @@
 package com.sharescreen.sender.network
 
-import android.os.Build
 import android.util.Log
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.io.PrintWriter
-import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
@@ -31,24 +29,7 @@ class ControlClient {
             var connected = false
             var currentSocket: Socket? = null
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    val wifiNetwork = NetworkBinder.wifiNetwork
-                    if (wifiNetwork != null) {
-                        try {
-                            val candidate = wifiNetwork.socketFactory.createSocket()
-                            candidate.connect(InetSocketAddress(ip, port), 5000)
-                            currentSocket = candidate
-                        } catch (e: Exception) {
-                            Log.w(tag, "Wi-Fi socket connection failed: " + e.message)
-                        }
-                    }
-                }
-
-                if (currentSocket == null) {
-                    val candidate = Socket()
-                    candidate.connect(InetSocketAddress(ip, port), 5000)
-                    currentSocket = candidate
-                }
+                currentSocket = NetworkBinder.createTcpSocket(ip, port, 5000)
                 if (generation != connectionGeneration.get()) {
                     currentSocket?.close()
                     return@thread

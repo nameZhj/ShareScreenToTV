@@ -10,10 +10,6 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -124,8 +120,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
-
     private val fileCastStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != FileCastService.ACTION_STATE_CHANGED) return
@@ -197,85 +191,13 @@ class MainActivity : ComponentActivity() {
         controlClient.disconnect()
         fileSender.cancelTransfer()
         super.onDestroy()
-        try {
-            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            networkCallback?.let { cm.unregisterNetworkCallback(it) }
-        } catch (_: Exception) {}
+
     }
 
-    // Bind process to real Wi-Fi, bypassing VPN, and monitor network changes
+    // Track physical LAN networks without changing the process-wide default network.
+    // Only sockets that target the TV are routed outside the VPN.
     private fun bindToWifiNetwork() {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-
-        fun updateWifiNetwork(network: Network, isChanged: Boolean = false) {
-            NetworkBinder.wifiNetwork = network
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                cm.bindProcessToNetwork(network)
-            } else {
-                @Suppress("DEPRECATION")
-                ConnectivityManager.setProcessDefaultNetwork(network)
-            }
-            if (isChanged) {
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, "检测到网络变化，已切换Wi-Fi网络", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-
-        // Initial search
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val wifiNet = cm.allNetworks.firstOrNull { net ->
-                cm.getNetworkCapabilities(net)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-            }
-            if (wifiNet != null) {
-                updateWifiNetwork(wifiNet)
-            }
-        }
-
-        val request = NetworkRequest.Builder()
-            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-            .build()
-
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                val isNew = NetworkBinder.wifiNetwork != null && NetworkBinder.wifiNetwork != network
-                updateWifiNetwork(network, isNew)
-            }
-
-            override fun onLinkPropertiesChanged(network: Network, linkProperties: android.net.LinkProperties) {
-                updateWifiNetwork(network)
-            }
-
-            override fun onLost(network: Network) {
-                if (NetworkBinder.wifiNetwork == network) {
-                    NetworkBinder.wifiNetwork = null
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) cm.bindProcessToNetwork(null)
-                }
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Wi-Fi网络已断开", Toast.LENGTH_SHORT).show()
-                    if (tvIp != null) {
-                        controlClient.disconnect()
-                        fileSender.cancelTransfer()
-                        if (fileCastState == FileCastService.STATE_RUNNING) {
-                            FileCastService.cancel(this@MainActivity)
-                        }
-                        stopCaptureService()
-                        tvToken = null
-                        tvIp = null
-                        isSharing = false
-                        isCastingFile = false
-                        isUploadingFile = false
-                        statusMessage = "Wi-Fi已断开，请连接Wi-Fi后重新扫码"
-                    }
-                }
-            }
-        }
-        networkCallback = callback
-        try {
-            cm.registerNetworkCallback(request, callback)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        NetworkBinder.start(applicationContext)
     }
 
     private fun handleQrResult(content: String) {
