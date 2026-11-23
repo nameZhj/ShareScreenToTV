@@ -14,8 +14,9 @@ class VideoDecoder(private val surface: Surface) {
     private val TAG = "VideoDecoder"
     var onVideoSizeChanged: ((Int, Int) -> Unit)? = null
 
+    @Synchronized
     fun start(width: Int, height: Int) {
-        if (isRunning) stop()
+        stop()
         
         try {
             val safeWidth = if (width > 0) width else 1920
@@ -71,6 +72,7 @@ class VideoDecoder(private val surface: Surface) {
         }
     }
     
+    @Synchronized
     fun queueInputBuffer(data: ByteArray, pts: Long) {
         if (!isConfigured || !isRunning) return
         try {
@@ -93,18 +95,25 @@ class VideoDecoder(private val surface: Surface) {
         }
     }
 
+    @Synchronized
     fun stop() {
         isRunning = false
         isConfigured = false
-        try {
-            outputThread?.interrupt()
-            outputThread = null
-        } catch (_: Exception) {}
 
-        try {
-            mediaCodec?.stop()
-            mediaCodec?.release()
-        } catch (_: Exception) {}
+        val worker = outputThread
+        outputThread = null
+        if (worker != null && worker !== Thread.currentThread()) {
+            worker.interrupt()
+            try {
+                worker.join(1_000)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+
+        val codec = mediaCodec
         mediaCodec = null
+        try { codec?.stop() } catch (_: Exception) {}
+        try { codec?.release() } catch (_: Exception) {}
     }
 }

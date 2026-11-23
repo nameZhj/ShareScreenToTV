@@ -20,8 +20,9 @@ class AudioDecoder {
     private val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
     private val TAG = "AudioDecoder"
 
+    @Synchronized
     fun start() {
-        if (isRunning) stop()
+        stop()
 
         try {
             // AAC-LC / 44100Hz / Stereo AudioSpecificConfig = 0x11 0x90
@@ -110,6 +111,7 @@ class AudioDecoder {
         }
     }
     
+    @Synchronized
     fun queueInputBuffer(data: ByteArray, pts: Long) {
         if (!isConfigured || !isRunning) return
         try {
@@ -128,26 +130,34 @@ class AudioDecoder {
         } catch (_: Exception) {}
     }
 
+    @Synchronized
     fun stop() {
         isRunning = false
         isConfigured = false
+
+        // Stop AudioTrack first so a blocking write in the output thread can return.
+        val track = audioTrack
         try {
-            outputThread?.interrupt()
-            outputThread = null
+            if (track?.state == AudioTrack.STATE_INITIALIZED) track.stop()
         } catch (_: Exception) {}
 
-        try {
-            if (audioTrack?.state == AudioTrack.STATE_INITIALIZED) {
-                audioTrack?.stop()
+        val worker = outputThread
+        outputThread = null
+        if (worker != null && worker !== Thread.currentThread()) {
+            worker.interrupt()
+            try {
+                worker.join(1_000)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
             }
-            audioTrack?.release()
-        } catch (_: Exception) {}
+        }
+
+        try { track?.release() } catch (_: Exception) {}
         audioTrack = null
 
-        try {
-            mediaCodec?.stop()
-            mediaCodec?.release()
-        } catch (_: Exception) {}
+        val codec = mediaCodec
         mediaCodec = null
+        try { codec?.stop() } catch (_: Exception) {}
+        try { codec?.release() } catch (_: Exception) {}
     }
 }
