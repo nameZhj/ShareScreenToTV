@@ -13,12 +13,14 @@ import java.net.Socket
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Semaphore
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 
 class FileReceiver {
     private val tag = "FileReceiver"
     private val filePort = 20003
-    private val maxFileSize = 2L * 1024L * 1024L * 1024L
+    private val storageReserveBytes = 32L * 1024L * 1024L
+    private val reservedDiskBytes = AtomicLong(0L)
     private val maxConcurrentClients = Semaphore(2)
     private val clients = java.util.Collections.newSetFromMap(ConcurrentHashMap<Socket, Boolean>())
 
@@ -87,6 +89,7 @@ class FileReceiver {
         onStopRequested: () -> Unit
     ) {
         var temporaryFile: File? = null
+        var reservedFileBytes = 0L
         try {
             client.soTimeout = 5000
             val input = DataInputStream(BufferedInputStream(client.getInputStream()))
@@ -95,7 +98,7 @@ class FileReceiver {
                 sendResponse(client, "DENIED")
                 return
             }
-            client.soTimeout = 30_000
+            client.soTimeout = 120_000
 
             val rawName = input.readUTF()
             val fileSize = input.readLong()
@@ -110,17 +113,18 @@ class FileReceiver {
                 sendResponse(client, "ERROR:INVALID_NAME")
                 return
             }
-            if (fileSize <= 0L || fileSize > maxFileSize) {
+            if (fileSize <= 0L) {
                 sendResponse(client, "ERROR:INVALID_SIZE")
                 return
             }
 
             val cacheDir = context.cacheDir.canonicalFile
             if (!cacheDir.exists() && !cacheDir.mkdirs()) throw IOException("无法创建缓存目录")
-            if (cacheDir.usableSpace > 0 && fileSize > cacheDir.usableSpace) {
+            if (!reserveStorage(cacheDir, fileSize)) {
                 sendResponse(client, "ERROR:INSUFFICIENT_SPACE")
                 return
             }
+            reservedFileBytes = fileSize
 
             temporaryFile = File.createTempFile("sharescreen_", ".part", cacheDir)
             FileOutputStream(temporaryFile).use { output ->
@@ -170,6 +174,23 @@ class FileReceiver {
             try { sendResponse(client, "ERROR:TRANSFER_FAILED") } catch (_: Exception) {}
         } finally {
             temporaryFile?.delete()
+            if (reservedFileBytes > 0L) reservedDiskBytes.addAndGet(-reservedFileBytes)
+        }
+    }
+
+
+    private fun reserveStorage(directory: File, requestedBytes: Long): Boolean {
+        if (requestedBytes <= 0L) return false
+        while (true) {
+            val alreadyReserved = reservedDiskBytes.get()
+            val availableBytes = directory.usableSpace
+            if (availableBytes <= storageReserveBytes) return false
+            val remainingBytes = availableBytes - storageReserveBytes
+            if (alreadyReserved > remainingBytes) return false
+            if (requestedBytes > remainingBytes - alreadyReserved) return false
+            if (reservedDiskBytes.compareAndSet(alreadyReserved, alreadyReserved + requestedBytes)) {
+                return true
+            }
         }
     }
 

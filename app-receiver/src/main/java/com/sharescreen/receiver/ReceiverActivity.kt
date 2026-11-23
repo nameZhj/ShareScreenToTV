@@ -420,7 +420,8 @@ class ReceiverActivity : AppCompatActivity() {
             runOnUiThread {
                 videoUdpReceiver?.allowedSenderIp = null
                 audioUdpReceiver?.allowedSenderIp = null
-                fileReceiver?.allowedSenderIp = null
+                // Keep the authenticated file-transfer peer during a phone-side foreground upload.
+                // A user may leave or close the sender Activity while FileCastService is still transferring.
                 isStreaming = false
                 tvStatus.text = "Waiting for connection..."
                 val currentIp = getWifiIpAddress()

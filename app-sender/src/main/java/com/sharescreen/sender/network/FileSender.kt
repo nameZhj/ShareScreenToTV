@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicReference
 class FileSender {
     private val tag = "FileSender"
     private val filePort = 20003
-    private val maxFileSize = 2L * 1024L * 1024L * 1024L
+    private val minimumFreeSpaceBytes = 32L * 1024L * 1024L
     private val activeTransferSocket = AtomicReference<Socket?>(null)
 
     private fun createSocket(ip: String, timeoutMs: Int): Socket {
@@ -45,11 +45,13 @@ class FileSender {
         ip: String,
         authToken: String,
         uri: Uri,
+        shouldCancel: () -> Boolean = { false },
         onProgress: (Int) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
         var tempFile: File? = null
         var socket: Socket? = null
         try {
+            if (shouldCancel()) return@withContext false
             val resolver = context.contentResolver
             var fileName = "uploaded_file"
             var fileSize = -1L
@@ -57,13 +59,16 @@ class FileSender {
                 if (cursor.moveToFirst()) {
                     val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                     val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
-                    if (nameIndex >= 0) cursor.getString(nameIndex)?.takeIf { it.isNotBlank() }?.let { fileName = it }
+                    if (nameIndex >= 0) cursor.getString(nameIndex)?.takeIf { it.isNotBlank() }?.let { fileName = sanitizeFileName(it) }
                     if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) fileSize = cursor.getLong(sizeIndex)
                 }
             }
 
-            if (fileSize > maxFileSize) throw IllegalArgumentException("文件超过 2 GB 接收上限")
             if (fileSize <= 0L) {
+                val availableForStaging = context.cacheDir.usableSpace - minimumFreeSpaceBytes
+                if (availableForStaging <= 0L) {
+                    throw IllegalStateException("手机存储空间不足，无法暂存未知长度的文件")
+                }
                 val stagedFile = File.createTempFile("sharescreen_upload_", ".tmp", context.cacheDir)
                 tempFile = stagedFile
                 val source = resolver.openInputStream(uri) ?: return@withContext false
@@ -72,26 +77,31 @@ class FileSender {
                         val buffer = ByteArray(64 * 1024)
                         var total = 0L
                         while (true) {
+                            if (shouldCancel()) throw java.io.IOException("Transfer cancelled")
                             val count = input.read(buffer)
                             if (count < 0) break
                             if (count == 0) continue
                             total += count
-                            if (total > maxFileSize) throw IllegalArgumentException("文件超过 2 GB 接收上限")
+                            if (count.toLong() > availableForStaging - total) {
+                                throw IllegalStateException("手机可用空间不足，无法暂存完整文件")
+                            }
+                            total += count.toLong()
                             output.write(buffer, 0, count)
                         }
                     }
                 }
                 fileSize = stagedFile.length()
             }
-            if (fileSize <= 0L || fileSize > maxFileSize) return@withContext false
+            if (fileSize <= 0L) return@withContext false
 
+            if (shouldCancel()) return@withContext false
             val sourceStream = if (tempFile != null) FileInputStream(tempFile) else resolver.openInputStream(uri)
                 ?: return@withContext false
 
             val transferSocket = createSocket(ip, 15_000)
             socket = transferSocket
             activeTransferSocket.set(transferSocket)
-            transferSocket.soTimeout = 30_000
+            transferSocket.soTimeout = 120_000
 
             sourceStream.use { input ->
                 val output = DataOutputStream(BufferedOutputStream(transferSocket.getOutputStream()))
@@ -103,13 +113,14 @@ class FileSender {
                 var totalRead = 0L
                 var lastProgress = -1
                 while (totalRead < fileSize) {
+                    if (shouldCancel()) throw java.io.IOException("Transfer cancelled")
                     val requested = minOf(buffer.size.toLong(), fileSize - totalRead).toInt()
                     val count = input.read(buffer, 0, requested)
                     if (count < 0) throw IllegalStateException("源文件读取不完整")
                     if (count == 0) continue
                     output.write(buffer, 0, count)
                     totalRead += count
-                    val progress = ((totalRead * 100L) / fileSize).toInt().coerceIn(0, 100)
+                    val progress = ((totalRead.toDouble() / fileSize.toDouble()) * 100.0).toInt().coerceIn(0, 100)
                     if (progress != lastProgress) {
                         lastProgress = progress
                         withContext(Dispatchers.Main) { onProgress(progress) }
@@ -130,6 +141,16 @@ class FileSender {
             try { socket?.close() } catch (_: Exception) {}
             try { tempFile?.delete() } catch (_: Exception) {}
         }
+    }
+
+
+    private fun sanitizeFileName(value: String): String {
+        val name = value.trim()
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .filterNot { it.isISOControl() }
+            .take(180)
+        return name.takeIf { it.isNotBlank() && it != "." && it != ".." } ?: "uploaded_file"
     }
 
     fun cancelTransfer() {

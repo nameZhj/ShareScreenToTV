@@ -3,8 +3,11 @@ package com.sharescreen.sender
 import com.sharescreen.sender.network.NetworkBinder
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.net.Uri
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.net.ConnectivityManager
@@ -39,7 +42,10 @@ class MainActivity : ComponentActivity() {
     private var tvHeight: Int = 1080
     private var isSharing by mutableStateOf(false)
     private var isCastingFile by mutableStateOf(false)
+    private var fileCastState by mutableStateOf(FileCastService.STATE_IDLE)
     private var isUploadingFile by mutableStateOf(false)
+    private var pendingMediaUri: Uri? = null
+    private var fileCastReceiverRegistered = false
     private var fileCastProgress by mutableStateOf(0)
     private var uploadFileProgress by mutableStateOf(0)
     private var statusMessage by mutableStateOf("请扫描电视上的二维码连接")
@@ -60,6 +66,21 @@ class MainActivity : ComponentActivity() {
         else Toast.makeText(this, "需要摄像头权限以扫描二维码", Toast.LENGTH_SHORT).show()
     }
 
+    private val requestNotificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            Toast.makeText(
+                this,
+                "通知权限未开启，后台传输仍会继续，但通知栏进度可能不可见",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        val uri = pendingMediaUri
+        pendingMediaUri = null
+        if (uri != null) launchBackgroundFileCast(uri)
+    }
+
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -71,9 +92,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private val pickMediaLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null && tvIp != null) {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: SecurityException) {
+                // Some document providers grant only a temporary read permission.
+            } catch (_: IllegalArgumentException) {
+                // The foreground service still receives the URI grant from its start Intent.
+            }
             startFileCasting(uri)
         }
     }
@@ -94,6 +125,37 @@ class MainActivity : ComponentActivity() {
     }
 
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    private val fileCastStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != FileCastService.ACTION_STATE_CHANGED) return
+            applyFileCastState(
+                intent.getStringExtra(FileCastService.PREF_STATE) ?: FileCastService.STATE_IDLE,
+                intent.getIntExtra(FileCastService.PREF_PROGRESS, 0)
+            )
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val filter = IntentFilter(FileCastService.ACTION_STATE_CHANGED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(fileCastStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(fileCastStateReceiver, filter)
+        }
+        fileCastReceiverRegistered = true
+        restoreFileCastState()
+    }
+
+    override fun onStop() {
+        if (fileCastReceiverRegistered) {
+            try { unregisterReceiver(fileCastStateReceiver) } catch (_: Exception) {}
+            fileCastReceiverRegistered = false
+        }
+        super.onStop()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -194,6 +256,9 @@ class MainActivity : ComponentActivity() {
                     if (tvIp != null) {
                         controlClient.disconnect()
                         fileSender.cancelTransfer()
+                        if (fileCastState == FileCastService.STATE_RUNNING) {
+                            FileCastService.cancel(this@MainActivity)
+                        }
                         stopCaptureService()
                         tvToken = null
                         tvIp = null
@@ -306,22 +371,40 @@ class MainActivity : ComponentActivity() {
                 Spacer(modifier = Modifier.height(16.dp))
                 
                 if (isCastingFile) {
-                    Text("文件投屏中: $fileCastProgress%", style = MaterialTheme.typography.bodyMedium)
-                    LinearProgressIndicator(
-                        progress = fileCastProgress / 100f,
-                        modifier = Modifier.fillMaxWidth(0.7f)
-                    )
+                    if (fileCastState == FileCastService.STATE_RUNNING) {
+                        Text(
+                            "后台传输中: $fileCastProgress%",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        LinearProgressIndicator(
+                            progress = fileCastProgress / 100f,
+                            modifier = Modifier.fillMaxWidth(0.7f)
+                        )
+                        Text(
+                            "现在可以返回桌面或切换其他应用，手机会继续向电视传输",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            "视频已发送到电视，电视端正在独立播放",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
                     Spacer(modifier = Modifier.height(8.dp))
                     Button(
                         onClick = { stopFileCasting() },
                         modifier = Modifier.fillMaxWidth(0.7f).height(52.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                     ) {
-                        Text("停止媒体投屏")
+                        Text(
+                            if (fileCastState == FileCastService.STATE_RUNNING) "取消后台传输"
+                            else "停止电视播放"
+                        )
                     }
                 } else {
                     Button(
-                        onClick = { pickMediaLauncher.launch("*/*") },
+                        onClick = { pickMediaLauncher.launch(arrayOf("video/*", "audio/*", "image/*")) },
                         modifier = Modifier.fillMaxWidth(0.7f).height(52.dp),
                         enabled = !isSharing && !isUploadingFile
                     ) {
@@ -359,6 +442,9 @@ class MainActivity : ComponentActivity() {
                 OutlinedButton(
                     onClick = {
                         fileSender.cancelTransfer()
+                        if (fileCastState == FileCastService.STATE_RUNNING) {
+                            FileCastService.cancel(this@MainActivity)
+                        }
                         controlClient.disconnect()
                         if (isSharing) stopCaptureService()
                         tvToken = null
@@ -401,34 +487,78 @@ class MainActivity : ComponentActivity() {
         isSharing = false
     }
 
-    private fun startFileCasting(uri: android.net.Uri) {
+    private fun startFileCasting(uri: Uri) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingMediaUri = uri
+            requestNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        launchBackgroundFileCast(uri)
+    }
+
+    private fun launchBackgroundFileCast(uri: Uri) {
         val ip = tvIp ?: return
         val token = tvToken ?: return
-        isCastingFile = true
-        fileCastProgress = 0
-        lifecycleScope.launch {
-            val success = fileSender.sendFile(this@MainActivity, ip, token, uri) { progress ->
-                fileCastProgress = progress
-            }
-            runOnUiThread {
-                isCastingFile = false
-                Toast.makeText(
-                    this@MainActivity,
-                    if (success) "文件传输完成" else "文件传输失败",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
+        val serviceIntent = Intent(this, FileCastService::class.java).apply {
+            action = FileCastService.ACTION_START
+            putExtra(FileCastService.EXTRA_IP, ip)
+            putExtra(FileCastService.EXTRA_TOKEN, token)
+            putExtra(FileCastService.EXTRA_URI, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        try {
+            ContextCompat.startForegroundService(this, serviceIntent)
+            applyFileCastState(FileCastService.STATE_RUNNING, 0)
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "无法启动后台投屏服务: ${e.localizedMessage ?: "未知错误"}",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
     private fun stopFileCasting() {
-        val ip = tvIp ?: return
-        val token = tvToken ?: return
-        fileSender.cancelTransfer()
-        lifecycleScope.launch {
-            fileSender.stopCasting(ip, token)
-            isCastingFile = false
+        when (fileCastState) {
+            FileCastService.STATE_RUNNING -> FileCastService.cancel(this)
+            FileCastService.STATE_COMPLETED -> {
+                val ip = tvIp ?: return
+                val token = tvToken ?: return
+                lifecycleScope.launch {
+                    fileSender.stopCasting(ip, token)
+                    FileCastService.clearCompletedState(this@MainActivity)
+                    applyFileCastState(FileCastService.STATE_IDLE, 0)
+                }
+            }
         }
+    }
+
+    private fun restoreFileCastState() {
+        val preferences = getSharedPreferences(FileCastService.PREFS_NAME, MODE_PRIVATE)
+        val state = preferences.getString(FileCastService.PREF_STATE, FileCastService.STATE_IDLE)
+            ?: FileCastService.STATE_IDLE
+        val updatedAt = preferences.getLong(FileCastService.PREF_UPDATED_AT, 0L)
+        val isExpiredCompletedState = state == FileCastService.STATE_COMPLETED &&
+            updatedAt > 0L && System.currentTimeMillis() - updatedAt > 24L * 60L * 60L * 1000L
+        if (isExpiredCompletedState) {
+            FileCastService.clearCompletedState(this)
+            applyFileCastState(FileCastService.STATE_IDLE, 0)
+            return
+        }
+        applyFileCastState(
+            state,
+            preferences.getInt(FileCastService.PREF_PROGRESS, 0)
+        )
+    }
+
+    private fun applyFileCastState(state: String, progress: Int) {
+        fileCastState = state
+        fileCastProgress = progress.coerceIn(0, 100)
+        isCastingFile = state == FileCastService.STATE_RUNNING ||
+            state == FileCastService.STATE_COMPLETED
     }
 
     private fun uploadFileToTv(uri: android.net.Uri) {
