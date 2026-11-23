@@ -291,7 +291,7 @@ class FileCastService : Service() {
             )?.use { cursor ->
                 if (cursor.moveToFirst()) {
                     val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                    if (index >= 0) cursor.getString(index)?.takeIf { it.isNotBlank() }
+                    if (index >= 0) cursor.getString(index)?.takeIf { it.isNotBlank() } else null
                 } else null
             } ?: "媒体文件"
         } catch (_: Exception) {
